@@ -1,3 +1,3 @@
-# glitchery
+# Exedr-mv
 
-It's a codename for my upcoming RPG Maker MV Scripts
+An RPG Maker MV script engine
