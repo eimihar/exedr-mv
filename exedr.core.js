@@ -50,7 +50,8 @@ Exedr.listener = function(exedr)
 
 	this.run = function(name)
 	{
-		this.data[name](exedr);
+		if(this.data[name])
+			this.data[name](exedr);
 	}
 };
 
@@ -79,22 +80,71 @@ Exedr.loader = function($exe)
 // Exedr.daytime
 // - handle daytime information
 //=================================
-Exedr.daytime = function(gameScreen)
+/**
+Tone candidates :
+- PRESUNSET
+	0, -100, -150, 75
+
+- Sunset :
+	0, -100, -200, -100
+	-75, -100, 0, 75
+**/
+Exedr.daytime = function(gameScreen, clock)
 {
 	this.data = {
-		PRESUNRISE : ['4:00', [-75, -75, 0, 50]],
-		SUNRISE : ['6:00', [0, 0, 0, 0]],
+		DAWN : ['4:00', [-150, -100, 0, 125]],
+		PRESUNRISE : ['6:00', [-75, -75, 25, 125]],
+		SUNRISE : ['7:00', [-20, -20, 0, 50]],
+		MORNING : ['7:00', [10, 10, 0, -20]],
 		NOONSTART : ['11:30', [45, 45, 0, -25]],
 		NOONEND : ['15:00', [0, 0, 0, 0]],
-		PRESUNSET : ['18:00', [-50, -50, 0, 25]],
-		SUNSET : ['21:00', [-75, -100, 0, 75]],
-		MIDNIGHT : ['00:10', [-125, -125, 0, 125]]
+		PRESUNSET : ['17:00', [0, -50, -100, 0]],
+		SUNSET : ['18:00', [0, -100, -100, 75]],
+		NIGHT : ['20:00', [-150, -100, 0, 125]],
+		MIDNIGHT : ['00:00', [-125, -125, 0, 125]],
+		DEEPMIDNIGHT : ['01:00', [-175, -175, 0, 125]]
 	};
 
 	this.callbacks = {};
 
-	this.set = function(preset, duration)
+	this.temporary = false;
+
+	this.pause = function()
 	{
+		this.paused = true;
+	}
+
+	this.unpause = function()
+	{
+		this.paused = false;
+	}
+
+	this.set = function(preset, duration, temporary)
+	{
+		// if preset is current, unpause anything, and set preset to the last preset.
+		if(preset == 'CURRENT')
+		{
+			this.unpause();
+			preset = this.current;
+		}
+
+		// daytime is currently set to temporary preset
+		if(this.paused)
+		{
+			this.current = preset;
+			return;
+		}
+
+		if(temporary)
+			this.pause();
+
+		if(!temporary && preset != 'CURRENT')
+		{
+			this.temporary = false;
+			this.current = preset;
+		}
+
+
 		// tint
 		var duration = duration || 60;
 		gameScreen.startTint(this.data[preset][1], duration);
@@ -109,20 +159,33 @@ Exedr.daytime = function(gameScreen)
 		}
 	}
 
+	this.isBetween = function(first, second)
+	{
+		var first = this.data[first][0];
+		var second = this.data[second][0];
+
+		return Exedr.util.timeIsBetween(first, second, clock.current());
+	}
+
+	this.is = function(preset)
+	{
+		return this.current == preset;
+	}
+
 	this.initiate = function()
 	{
 		for(var preset in this.data)
 		{
 			var data = $exe.daytime.data[preset];
-			var time = data[0].split(':');
+			var time = Exedr.util.parseTime(data[0]);
 
 			// console.log(parseInt(time[0])+':'+parseInt(time[1]));
 			(function(preset)
 			{
-				$exe.event.setDaily(parseInt(time[0]), parseInt(time[1]), function()
+				$exe.event.setDaily(time.hour, time.minute, function()
 				{
 					// console.log(preset);
-					$exe.daytime.set(preset, 10);
+					$exe.daytime.set(preset);
 				});
 			})(preset);
 		}
@@ -272,13 +335,28 @@ Exedr.time = function()
 			return Math.floor(time.minutes() / 60 / 24) % 7;
 		}
 
+		this.current = function()
+		{
+			return Exedr.util.stringifyTime(this.hour(), this.minute());
+		}
+
+		/**
+		* @param {string} first
+		* @param {string} second
+		**/
+		this.isBetween = function(first, second)
+		{
+			return Exedr.util.timeIsBetween(first, second, this.current());
+		}
+
 		this.createText = function()
 		{
 			var hour = this.hour();
 			var amPm = hour >=  12 ? 'PM' : 'AM';
 				hour = hour === 0 ? 12 : (hour > 12 ? hour - 12 : hour);
 			var minute = this.minute();
-			var text = Exedr.util.repeatFills(hour, 2)+':'+Exedr.util.repeatFills(minute, 2)+' '+amPm;
+			// var text = Exedr.util.repeatFills(hour, 2)+':'+Exedr.util.repeatFills(minute, 2)+' '+amPm;
+			var text = Exedr.util.stringifyTime(hour, minute)+' '+amPm
 
 			return text;
 		}
@@ -500,9 +578,45 @@ Exedr.time = function()
 //=================================
 Exedr.weather = function($gameScreen)
 {
-	this.start = function(type, power, length, duration)
+	this.current = null;
+
+	this.start = function(type, power, duration)
 	{
+		this.current = [type, power, duration];
+
 		$gameScreen.changeWeather(type, power, duration);
+	}
+
+	this.setInside = function()
+	{
+		this.stop(true);
+	}
+
+	// instantly continue weather.
+	this.continue = function()
+	{
+		if(!this.current)
+			return;
+
+		$gameScreen.changeWeather(this.current[0], this.current[1], this.current[2]);
+	}
+
+	this.stop = function(instant)
+	{
+		if(instant)
+		{
+			$gameScreen.clearWeather();
+		}
+		else
+		{
+			this.current = null;
+			$gameScreen.changeWeather('none', 0, 60);
+		}
+	}
+
+	this.isRunning = function()
+	{
+		return this.current !== null;
 	}
 
 	/**
@@ -522,7 +636,7 @@ Exedr.weather = function($gameScreen)
 				$gameScreen._weatherType = 9;
 		}
 	}
-}($gameScreen);
+};
 
 //=================================
 // Exedr.Util
@@ -543,6 +657,48 @@ Exedr.util = new function()
 			zeros += char;
 
 		return zeros+text;
+	}
+
+	/**
+	* @param {string} time
+	* @return {hour: int, minute: int}
+	**/
+	this.parseTime = function(time)
+	{
+		var time = time.split(':');
+
+		return {hour: parseInt(time[0]), minute: parseInt(time[1])};
+	}
+
+	this.stringifyTime = function(hour, minute)
+	{
+		var time = Exedr.util.repeatFills(hour, 2)+':'+Exedr.util.repeatFills(minute, 2);
+
+		return time;
+	}
+
+	/**
+	* @param {string} first
+	* @param {second} second
+	* @param {current} string
+	**/
+	this.timeIsBetween = function(first, second, current)
+	{
+		var first = this.parseTime(first);
+			first = first.hour * 60 + first.minute;
+		var second = this.parseTime(second);
+			second = second.hour * 60 + second.minute;
+
+		if(second < first)
+			second += 1440;
+
+		var current = this.parseTime(current);
+			current = current.hour * 60 + current.minute;
+
+		if(current < first)
+			current += 1440;
+
+		return first <= current && second >= current;
 	}
 };
 
@@ -623,6 +779,43 @@ Window_Time.prototype.update = function()
 };
 
 //==================================================
+// @Game_Followers
+//==================================================
+Game_Followers.prototype.pos = function(x, y)
+{
+	var bool = false;
+	this.forEach(function(follower)
+	{
+		if(follower.actor())
+			if(follower.pos(x, y))
+				bool = true;
+	});
+
+	return bool;
+};
+
+//==================================================
+// Game_TroopEvents
+// - Collection of Game_TroopEvent
+//==================================================
+function Game_TroopEvents()
+{
+	this.initialize.apply(this, arguments);
+}
+
+Game_TroopEvents.prototype.constructor = Game_TroopEvents;
+
+Game_TroopEvents.prototype.add = function(troopEvent)
+{
+	this.data[troopEvent.troopEventId()] = troopEvent;
+}
+
+Game_TroopEvents.prototype.remove = function(troopEvent)
+{
+
+}
+
+//==================================================
 // Class Game_TroopEvent
 //==================================================
 function Game_TroopEvent()
@@ -639,16 +832,22 @@ Game_TroopEvent.prototype.constructor = Game_TroopEvent;
 * @param {int} eventId
 * @param {int} troopEventId
 */
-Game_TroopEvent.prototype.initialize = function(mapId, eventId, troopEventId)
+Game_TroopEvent.prototype.initialize = function(mapId, eventId, troopEventId, troopId)
 {
 	Game_Character.prototype.initialize.call(this);
 	this._mapId = mapId;
 	this._eventId = eventId;
 	this._troopEventId = troopEventId;
+	this._troopId = troopId;
 	this.refresh();
 };
 
-Game_TroopEvent.prototype.appear = function(x, y)
+Game_TroopEvent.prototype.troopEventId = function()
+{
+	return this._troopEventId;
+}
+
+Game_TroopEvent.prototype.appearAt = function(x, y)
 {
 	this.setOpacity(0);
 	this.locate(x, y);
@@ -667,6 +866,14 @@ Game_TroopEvent.prototype.appear = function(x, y)
 	});
 }
 
+Game_TroopEvent.prototype.checkEventTriggerTouch = function(x, y)
+{
+	if(!$gameMap.isEventRunning())
+		if(this._trigger === 2 && ($gamePlayer.pos(x, y) || $gamePlayer._followers.pos(x, y)))
+			if (!this.isJumping() && this.isNormalPriority())
+				this.start();
+}
+
 /**
 * This Class will use the referenced eventId (_referenceLocalId)
 */
@@ -675,11 +882,42 @@ Game_TroopEvent.prototype.event = function()
 	return $exe.data.troopEvents[this._troopEventId];
 };
 
-Game_Map.prototype.createTroopEvent = function(troopEventId, x, y)
+Game_TroopEvent.prototype.start = function()
+{
+	this._starting = true;
+
+	BattleManager.setup(this._troopId, true, false);
+	BattleManager.onEncounter();
+
+	$gamePlayer.beginEncounter();
+
+	this.erase();
+};
+
+//===============================================
+// @Game_Map
+// - &setup
+// - createTroopEvent
+// - createRandomTroop
+// - createRandomEncounter
+// - getTotalEncounter
+// - getRandomEncounter
+//===============================================
+(function(parent)
+{
+	Game_Map.prototype.setup = function()
+	{
+		parent.setup.apply(this, arguments);
+		$exe.listener.run('gameMapSetup');
+	}
+})(Exedr.protoCopy(Game_Map, ['setup']));
+
+Game_Map.prototype.createTroopEvent = function(troopId, x, y)
 {
 	// base the new id to the length of the current dataMap.events
+	var troopEventId = $exe.data.troopEventMap[troopId];
 	var eventId = this._events.length;
-	var troopEvent = this._events[eventId] = new Game_TroopEvent(this._mapId, eventId, troopEventId);
+	var troopEvent = this._events[eventId] = new Game_TroopEvent(this._mapId, eventId, troopEventId, troopId);
 
 	SceneManager._scene.pushCharacterSprite(troopEvent);
 
@@ -691,11 +929,23 @@ Game_Map.prototype.createTroopEvent = function(troopEventId, x, y)
 
 Game_Map.prototype.createRandomTroop = function()
 {
-	var troopEventId = $exe.data.troopEventMap[this.getRandomEncounter().troopId];
-	var troop = this.createTroopEvent(troopEventId);
+	var troop = this.createTroopEvent(this.getRandomEncounter().troopId);
 
 	return troop;
 };
+
+Game_Map.prototype.createRandomEncounter = function()
+{
+	var troop = this.createRandomTroop();
+	var loc = $gamePlayer.getRandomLocation();
+
+	troop.appearAt(loc[0], loc[1]);
+}
+
+Game_Map.prototype.getTotalEncounter = function()
+{
+	return $dataMap.currentEncounter.length;
+}
 
 /**
 * Get random encounter from list of encounters registered in the current map.
@@ -721,17 +971,50 @@ Game_Map.prototype.getRandomEncounter = function()
 
 //==================================================
 // @Game_Player
-// - executeEncounter
+// - &executeEncounter
+// - getRandomLocation
 //==================================================
 Game_Player.prototype.executeEncounter = function()
 {
 	if(!$gameMap.isEventRunning() && this._encounterCount <= 0)
 	{
-		return true;
+		this.makeEncounterCount();
+
+		if($dataMap.encounterList.length > 0)
+			$gameMap.createRandomEncounter();
 	}
 
 	return false;
 };
+
+Game_Player.prototype.moveTo = function(x, y)
+{
+	if(this.x != x || this.y != y)
+	{
+		var direction = this.findDirectionTo(x, y);
+		this.executeMove(direction);
+
+		this.moveTo(x, y);
+	}
+}
+
+Game_Player.prototype.beginEncounter = function()
+{
+	this._isEncountering = true;
+}
+
+Game_Player.prototype.isEncountering = function()
+{
+	var isEncountering = this._isEncountering ? true : false;
+
+	if(isEncountering)
+	{
+		this._isEncountering = false;
+		return true;
+	}
+
+	return false;
+}
 
 /**
 * Get random passable location around the player
@@ -739,7 +1022,63 @@ Game_Player.prototype.executeEncounter = function()
 **/
 Game_Player.prototype.getRandomLocation = function()
 {
+	// btm, left, right, top
+	var directions = [2, 4, 6, 8];
+	var opposites = {2:8, 8:2, 4:6, 6:4};
+	var increment = {2: 1, 4: -1, 6: 1, 8: -1};
 
+	var search = {}; // search records.
+	var farthest = {d: null, steps: 0}; // store farthest steps
+	var candidates = []; // store direction longer than 5 steps
+
+	mainLoop:
+	for(var i in directions)
+	{
+		var d = directions[i];
+		var op = opposites[d];
+
+		if(!search[d])
+			search[d] = {x: this.x, y: this.y, steps: 0, completed: false};
+
+		while(true)
+		{
+			var nextX = search[d].x;
+			var nextY = search[d].y;
+
+			if(d == 2 || d == 8)
+				nextY = nextY + increment[d];
+
+			if(d == 4 || d == 6)
+				nextX = nextX + increment[d];
+
+			if(!$gameMap.isPassable(nextX, nextY, op))
+			{
+				if(d == 8)
+					break mainLoop;
+
+				break;
+			}
+
+			search[d].x = nextX;
+			search[d].y = nextY;
+
+			if(search[d].steps > 8)
+				break;
+
+			search[d].steps++;
+		}
+
+		if(search[d].steps >= 5)
+			candidates.push(d);
+
+		if(search[d].steps > farthest.steps)
+		{
+			farthest.d = d;
+			farthest.steps = search[d].steps;
+		}
+	}
+
+	return [search[farthest.d].x, search[farthest.d].y];
 }
 
 //==================================================
@@ -780,13 +1119,15 @@ Scene_Map.prototype.pushCharacterSprite = function(event)
 		parent.createAllWindows.call(this);
 	}
 
-	/*Scene_Map.prototype.updateEncounter = function()
+	Scene_Map.prototype.updateEncounter = function()
 	{
-		if($gamePlayer.executeEncounter())
-		{
+		$gamePlayer.executeEncounter();
 
+		if($gamePlayer.isEncountering())
+		{
+			SceneManager.push(Scene_Battle);
 		}
-	}*/
+	}
 	
 })(Exedr.protoCopy(Scene_Map, ['createAllWindows', 'updateEncounter']));
 
