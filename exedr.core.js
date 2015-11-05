@@ -18,28 +18,19 @@ Exedr.create = function()
 }
 
 /**
-* @param {array} data
-* @param {closure} onClear
-**/
-Exedr.data = function(data, onClear)
+* Storage instance.
+*/
+Exedr.data = new function()
 {
-	if(onClear)
-		data.onClear = onClear;
 
-	data.clear = function()
-	{
-		data.onClear();
-	}
-
-	return data;
-}
+};
 
 //=================================
 // Exedr.registry
 // - A general listener
 // @param Exedr object
 //=================================
-Exedr.listener = function(exedr)
+Exedr.listener = new function()
 {
 	this.data = {};
 
@@ -51,13 +42,13 @@ Exedr.listener = function(exedr)
 	this.run = function(name)
 	{
 		if(this.data[name])
-			this.data[name](exedr);
+			this.data[name](this);
 	}
 };
 
 //===================================
 // Exedr.loader
-//==================================
+//===================================
 Exedr.loader = function($exe)
 {
 	this.loadEvents = function(variable, mapId)
@@ -75,6 +66,141 @@ Exedr.loader = function($exe)
 		});
 	}
 }
+
+//===================================
+// Exedr.actorManager
+//==================================
+Exedr.actorManager = new function()
+{
+	this.aliases = {};
+	this.storage = {};
+
+	this.setAliases = function(key, aliases)
+	{
+		for(var i in aliases)
+			this.aliases[aliases[i]] = key; 
+	}
+
+	this.has = function(key)
+	{
+		if(this.aliases[key])
+			key = this.aliases[key];
+
+		return this.storage[key] ? true : false;
+	}
+
+	this.data = function(key)
+	{
+		if(this.aliases[key])
+			key = this.aliases[key];
+
+		return this.storage[key] ? this.storage[key] : this.storage[key] = new function(key)
+		{
+			var key = key;
+			this.faceIndexes = {};
+			this.faceName = null;
+			this.index = null;
+
+			this.isExists = function()
+			{
+				return this.faceName ? true : false;
+			}
+
+			this.setDefaultIndex = function(index)
+			{
+				this.index = index;
+
+				return this;
+			}
+
+			/**
+			* file name for this actor
+			*/
+			this.setFaceName = function(name)
+			{
+				this.faceName = name;
+
+				return this;
+			}
+
+			this.setFaceIndexes = function(data)
+			{
+				for(var key in data)
+					this.faceIndexes[key] = data[key];
+
+				return this;
+			}
+
+			/**
+			* Set both face name and indexes.
+			*/
+			this.setFace = function(name, data)
+			{
+				return this.setFaceName(name).setFaceIndexes(data);
+			}
+
+			/**
+			* @return array [name, index]
+			*/
+			this.getFace = function(key)
+			{
+				return [this.faceName, this.faceIndexes[key] ? this.faceIndexes[key] - 1 : (this.index ? this.index : 0)]
+			}
+		}(key);
+	}
+
+	this.register = function(dataActors)
+	{
+		for(var i in dataActors)
+		{
+			var actor = dataActors[i];
+
+			if(actor && actor.note)
+			{
+				var name = actor.name.toLowerCase();
+				var faceName = actor.faceName;
+				var faceIndex = actor.faceIndex;
+				// var tags = Exedr.util.readTags(actor.note);
+				// var aliases = [];
+				var faces = {};
+				var aliases = [];
+
+				var actorData = this.data(name);
+				actorData.setDefaultIndex(faceIndex);
+
+				for(var key in actor.meta)
+				{
+					switch(key)
+					{
+						case 'alias':
+							var alias = actor.meta[key].split(',');
+
+							alias.forEach(function(value)
+							{
+								aliases.push(value.trim());
+							});
+						break;
+						case 'face':
+							var faceList = actor.meta[key].split(',');
+
+							faceList.forEach(function(value)
+							{
+								var face = value.trim().split('=');
+								if(face[0].trim() == 'default')
+									actorData.setDefaultIndex(face[1].trim()-1);
+								else
+									faces[face[0].trim()] = face[1].trim();
+							});
+						break;
+					}
+				}
+
+				this.setAliases(name, aliases);
+				actorData.setFace(faceName, faces);
+			}
+		}
+	}
+}();
 
 //=================================
 // Exedr.daytime
@@ -217,7 +343,7 @@ Exedr.daytime = function(gameScreen, clock)
 		if(!this.callbacks[preset])
 			this.callbacks[preset] = {};
 
-		return this.callbacks[preset][key] = Exedr.data(callbacks, function()
+		return this.callbacks[preset][key] = Exedr.util.data(callbacks, function()
 		{
 			delete context.callbacks[preset][key];
 		});
@@ -335,14 +461,40 @@ Exedr.time = function()
 			return Math.floor(time.minutes() / 60 / 24) % 7;
 		}
 
+		this.isDay = function(day)
+		{
+			var days = {
+				SUNDAY : 1,
+				MONDAY : 2,
+				TUESDAY : 3,
+				WEDNESDAY : 4,
+				THURSDAY : 5,
+				FRIDAY : 6,
+				SATURDAY : 7
+			};
+
+			return days[day.toUpperCase()] == this.day();
+		}
+
 		this.current = function()
 		{
 			return Exedr.util.stringifyTime(this.hour(), this.minute());
 		}
 
 		/**
+		* @param {int} first
+		* @param {int} second
+		* @return bool
+		**/
+		this.isBetweenHour = function(first, second)
+		{
+			return first <= this.hour() && second >= this.hour();
+		}
+
+		/**
 		* @param {string} first
 		* @param {string} second
+		* @return bool
 		**/
 		this.isBetween = function(first, second)
 		{
@@ -644,6 +796,56 @@ Exedr.weather = function($gameScreen)
 //=================================
 Exedr.util = new function()
 {
+	this.data = function(data, onClear)
+	{
+		if(onClear)
+			data.onClear = onClear;
+
+		data.clear = function()
+		{
+			data.onClear();
+		}
+
+		return data;
+	}
+
+	/**
+	* @return [key, value, replaced text]
+	*/
+	this.readTag = function(text)
+	{
+		var match = text.match(/<(.*?)>/);
+
+		if(!match)
+			return false;
+
+		var result = match[1].split(':');
+
+		return [result[0], result[1].trim(), text.replace(match[0], '')];
+	}
+
+	/**
+	* @return array of tag data and text balance.
+	*/
+	this.readTags = function(text)
+	{
+		var balance = null;
+		var tags = {};
+
+		while(true)
+		{
+			var match = this.readTag(text);
+			if(!match)
+				break;
+
+			tags[match[0]] = match[1];
+			text = match[2];
+			balance = text;
+		}
+
+		return tags;
+	}
+
 	this.repeatFills = function(text, length, char)
 	{
 		var char = char || '0';
@@ -908,7 +1110,7 @@ Game_TroopEvent.prototype.start = function()
 	Game_Map.prototype.setup = function()
 	{
 		parent.setup.apply(this, arguments);
-		$exe.listener.run('gameMapSetup');
+		Exedr.listener.run('gameMapSetup');
 	}
 })(Exedr.protoCopy(Game_Map, ['setup']));
 
@@ -1131,6 +1333,34 @@ Scene_Map.prototype.pushCharacterSprite = function(event)
 	
 })(Exedr.protoCopy(Scene_Map, ['createAllWindows', 'updateEncounter']));
 
+(function(parent)
+{
+	Game_Message.prototype.add = function(text)
+	{
+		var actorTags = text.match(/<(.*?)>/);
+
+		if(actorTags)
+		{
+			var actorTag = actorTags[1].split(':');
+			text = text.replace(actorTags[0], '');
+
+			if(Exedr.actorManager.has(actorTag[0]))
+			{
+				var actorFace = Exedr.actorManager.data(actorTag[0]).getFace(actorTag[1] ? actorTag[1] : 0);
+				this.setFaceImage(actorFace[0], actorFace[1]);
+			}
+			// actor not found...
+			// use his name instead.
+			else
+			{
+				text = actorTag[0]+' : '+text;
+			}
+		}
+
+		parent.add.call(this, text);
+	}
+})(Exedr.protoCopy(Game_Message, ['add']));
+
 //============================
 // @DataManager
 // - createAllWindows
@@ -1142,7 +1372,7 @@ Scene_Map.prototype.pushCharacterSprite = function(event)
 	DataManager.createGameObjects = function()
 	{
 		createGameObjects.call(this);
-		$exe.listener.run('gameObjectCreation');
+		Exedr.listener.run('gameObjectCreation');
 	}
 
 	DataManager.loadDataFile = function(name, src, callback)
@@ -1202,10 +1432,10 @@ Scene_Map.prototype.pushCharacterSprite = function(event)
 //==============================
 var $exe = Exedr.create();
 
-$exe.listener = new Exedr.listener($exe);
+// Exedr.listener = new Exedr.listener($exe);
 
-$exe.listener.on('gameObjectCreation', function()
+Exedr.listener.on('gameObjectCreation', function()
 {
-	$exe.listener.run('engineInitiation');
-	$exe.listener.run('gameStart');
+	Exedr.listener.run('engineInitiation');
+	Exedr.listener.run('gameStart');
 });
