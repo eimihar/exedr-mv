@@ -1,2 +1,3 @@
-exedr.game.js
-exedr.engine.js
+*.js
+!exedr.core.js
+/Exedr

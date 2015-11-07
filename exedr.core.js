@@ -22,7 +22,7 @@ Exedr.create = function()
 */
 Exedr.data = new function()
 {
-
+	this.cronStorage = {};
 };
 
 //=================================
@@ -49,23 +49,23 @@ Exedr.listener = new function()
 //===================================
 // Exedr.loader
 //===================================
-Exedr.loader = function($exe)
+Exedr.loader = new function()
 {
 	this.loadEvents = function(variable, mapId)
 	{
-		if(!$exe.data[variable])
-			$exe.data[variable] = {};
+		if(!Exedr.data[variable])
+			Exedr.data[variable] = {};
 
 		DataManager.loadMapData(mapId, function(dataMap)
 		{
 			dataMap.events.forEach(function(ev)
 			{
 				if(ev)
-					$exe.data[variable][ev.id] = ev;
+					Exedr.data[variable][ev.id] = ev;
 			});
 		});
 	}
-}
+};
 
 //===================================
 // Exedr.actorManager
@@ -144,7 +144,12 @@ Exedr.actorManager = new function()
 			*/
 			this.getFace = function(key)
 			{
-				return [this.faceName, this.faceIndexes[key] ? this.faceIndexes[key] - 1 : (this.index ? this.index : 0)]
+				var faceIndex = this.index ? this.index : 0;
+
+				if(this.faceIndexes[key])
+					faceIndex = this.faceIndexes[key][Math.randomInt(this.faceIndexes[key].length)] - 1;
+
+				return [this.faceName, faceIndex];
 			}
 		}(key);
 	}
@@ -155,7 +160,7 @@ Exedr.actorManager = new function()
 		{
 			var actor = dataActors[i];
 
-			if(actor && actor.note)
+			if(actor)
 			{
 				var name = actor.name.toLowerCase();
 				var faceName = actor.faceName;
@@ -181,7 +186,7 @@ Exedr.actorManager = new function()
 							});
 						break;
 						case 'face':
-							var faceList = actor.meta[key].split(',');
+							var faceList = actor.meta[key].split(';');
 
 							faceList.forEach(function(value)
 							{
@@ -189,7 +194,7 @@ Exedr.actorManager = new function()
 								if(face[0].trim() == 'default')
 									actorData.setDefaultIndex(face[1].trim()-1);
 								else
-									faces[face[0].trim()] = face[1].trim();
+									faces[face[0].trim()] = face[1].trim().split(',');
 							});
 						break;
 					}
@@ -202,171 +207,11 @@ Exedr.actorManager = new function()
 	}
 }();
 
-//=================================
-// Exedr.daytime
-// - handle daytime information
-//=================================
-/**
-Tone candidates :
-- PRESUNSET
-	0, -100, -150, 75
-
-- Sunset :
-	0, -100, -200, -100
-	-75, -100, 0, 75
-**/
-Exedr.daytime = function(gameScreen, clock)
-{
-	this.data = {
-		DAWN : ['4:00', [-150, -100, 0, 125]],
-		PRESUNRISE : ['6:00', [-75, -75, 25, 125]],
-		SUNRISE : ['7:00', [-20, -20, 0, 50]],
-		MORNING : ['7:00', [10, 10, 0, -20]],
-		NOONSTART : ['11:30', [45, 45, 0, -25]],
-		NOONEND : ['15:00', [0, 0, 0, 0]],
-		PRESUNSET : ['17:00', [0, -50, -100, 0]],
-		SUNSET : ['18:00', [0, -100, -100, 75]],
-		NIGHT : ['20:00', [-150, -100, 0, 125]],
-		MIDNIGHT : ['00:00', [-125, -125, 0, 125]],
-		DEEPMIDNIGHT : ['01:00', [-175, -175, 0, 125]]
-	};
-
-	this.callbacks = {};
-
-	this.temporary = false;
-
-	this.pause = function()
-	{
-		this.paused = true;
-	}
-
-	this.unpause = function()
-	{
-		this.paused = false;
-	}
-
-	this.set = function(preset, duration, temporary)
-	{
-		// if preset is current, unpause anything, and set preset to the last preset.
-		if(preset == 'CURRENT')
-		{
-			this.unpause();
-			preset = this.current;
-		}
-
-		// daytime is currently set to temporary preset
-		if(this.paused)
-		{
-			this.current = preset;
-			return;
-		}
-
-		if(temporary)
-			this.pause();
-
-		if(!temporary && preset != 'CURRENT')
-		{
-			this.temporary = false;
-			this.current = preset;
-		}
-
-
-		// tint
-		var duration = duration || 60;
-		gameScreen.startTint(this.data[preset][1], duration);
-
-		// execute callbacks
-		if(this.callbacks[preset])
-		{
-			for(var key in this.callbacks[preset])
-			{
-				this.callbacks[preset][key]();
-			}
-		}
-	}
-
-	this.isBetween = function(first, second)
-	{
-		var first = this.data[first][0];
-		var second = this.data[second][0];
-
-		return Exedr.util.timeIsBetween(first, second, clock.current());
-	}
-
-	this.is = function(preset)
-	{
-		return this.current == preset;
-	}
-
-	this.initiate = function()
-	{
-		for(var preset in this.data)
-		{
-			var data = $exe.daytime.data[preset];
-			var time = Exedr.util.parseTime(data[0]);
-
-			// console.log(parseInt(time[0])+':'+parseInt(time[1]));
-			(function(preset)
-			{
-				$exe.event.setDaily(time.hour, time.minute, function()
-				{
-					// console.log(preset);
-					$exe.daytime.set(preset);
-				});
-			})(preset);
-		}
-	}
-
-	/**
-	* Get time for the given preset
-	* @return array [h, m] 
-	**/
-	this.getTime = function(preset)
-	{
-		var data = this.data[preset][0].split(':');
-
-		return [parseInt(data[0]), parseInt(data[1])];
-	}
-
-	/**
-	* Register callback on the given preset
-	* @param {string} preset
-	* @param {closure} callbacks
-	* @return Exedr.storage
-	**/
-	this.on = function(preset, callbacks)
-	{
-		var key = Math.random()+'';
-
-		var context = this;
-
-		if(!this.callbacks[preset])
-			this.callbacks[preset] = {};
-
-		return this.callbacks[preset][key] = Exedr.util.data(callbacks, function()
-		{
-			delete context.callbacks[preset][key];
-		});
-	}
-}
-
-//============================
-// Exedr.encounter
-// - an encounter manager
-//============================
-Exedr.encounter = function()
-{
-	this.create = function(troopId)
-	{
-
-	}
-}
-
 //=============================
 // Exedr.time 
 // - A Time Engine
 //=============================
-Exedr.time = function()
+Exedr.time = new function()
 {
 	var framely = {};
 
@@ -423,7 +268,7 @@ Exedr.time = function()
 
 	this.minutelyUpdate = function()
 	{
-		this.event.update();
+		Exedr.chron.update();
 	}
 
 	this.onEveryFrame = function(callback)
@@ -432,297 +277,464 @@ Exedr.time = function()
 	}
 
 	this.setSpeed(1);
+};
 
-	//=======================
-	// Exedr.time.clock
-	// - The game clock
-	//=======================
-	this.clock = new function(time)
+//=======================
+// Exedr.time.clock
+// - The game clock
+//=======================
+Exedr.clock = new function(time)
+{
+	this.time = time;
+
+	this.minute = function()
 	{
-		var time = time;
+		return this.time.minutes() % 60;
+	}
 
-		this.time = function()
-		{
-			return time;
-		}
-
-		this.minute = function()
-		{
-			return time.minutes() % 60;
-		}
-
-		this.hour = function()
-		{
-			return Math.floor(time.minutes() / 60) % 24;
-		}
-
-		this.day = function()
-		{
-			return Math.floor(time.minutes() / 60 / 24) % 7;
-		}
-
-		this.isDay = function(day)
-		{
-			var days = {
-				SUNDAY : 1,
-				MONDAY : 2,
-				TUESDAY : 3,
-				WEDNESDAY : 4,
-				THURSDAY : 5,
-				FRIDAY : 6,
-				SATURDAY : 7
-			};
-
-			return days[day.toUpperCase()] == this.day();
-		}
-
-		this.current = function()
-		{
-			return Exedr.util.stringifyTime(this.hour(), this.minute());
-		}
-
-		/**
-		* @param {int} first
-		* @param {int} second
-		* @return bool
-		**/
-		this.isBetweenHour = function(first, second)
-		{
-			return first <= this.hour() && second >= this.hour();
-		}
-
-		/**
-		* @param {string} first
-		* @param {string} second
-		* @return bool
-		**/
-		this.isBetween = function(first, second)
-		{
-			return Exedr.util.timeIsBetween(first, second, this.current());
-		}
-
-		this.createText = function()
-		{
-			var hour = this.hour();
-			var amPm = hour >=  12 ? 'PM' : 'AM';
-				hour = hour === 0 ? 12 : (hour > 12 ? hour - 12 : hour);
-			var minute = this.minute();
-			// var text = Exedr.util.repeatFills(hour, 2)+':'+Exedr.util.repeatFills(minute, 2)+' '+amPm;
-			var text = Exedr.util.stringifyTime(hour, minute)+' '+amPm
-
-			return text;
-		}
-	}(this);
-
-	//===================
-	// Exedr.time.event
-	// - The game time-based eventing engine
-	//===================
-	this.event = new function(clock)
+	this.hour = function()
 	{
-		var daily = {};
-		var clock = clock;
-		this.clock = clock;
-		var interval = {};
-		var minutely = {};
-		var storage = {};
+		return Math.floor(this.time.minutes() / 60) % 24;
+	}
 
-		var calculateMinutes = function(startHour, startMinute, endHour, endMinute)
+	this.day = function()
+	{
+		return Math.floor(this.time.minutes() / 60 / 24) % 7;
+	}
+
+	this.isDay = function(day)
+	{
+		var days = {
+			SUNDAY : 1,
+			MONDAY : 2,
+			TUESDAY : 3,
+			WEDNESDAY : 4,
+			THURSDAY : 5,
+			FRIDAY : 6,
+			SATURDAY : 7
+		};
+
+		return days[day.toUpperCase()] == this.day();
+	}
+
+	this.current = function()
+	{
+		return Exedr.util.stringifyTime(this.hour(), this.minute());
+	}
+
+	/**
+	* @param {int} first
+	* @param {int} second
+	* @return bool
+	**/
+	this.isBetweenHour = function(first, second)
+	{
+		return first <= this.hour() && second >= this.hour();
+	}
+
+	/**
+	* @param {string} first
+	* @param {string} second
+	* @return bool
+	**/
+	this.isBetween = function(first, second)
+	{
+		return Exedr.util.timeIsBetween(first, second, this.current());
+	}
+
+	this.createText = function()
+	{
+		var hour = this.hour();
+		var amPm = hour >=  12 ? 'PM' : 'AM';
+			hour = hour === 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+		var minute = this.minute();
+		// var text = Exedr.util.repeatFills(hour, 2)+':'+Exedr.util.repeatFills(minute, 2)+' '+amPm;
+		var text = Exedr.util.stringifyTime(hour, minute)+' '+amPm
+
+		return text;
+	}
+}(Exedr.time);
+
+//===================
+// Exedr.chron
+// - The game time-based eventing engine
+//===================
+Exedr.chron = new function(clock)
+{
+	var daily = {};
+	var clock = clock;
+	this.clock = clock;
+	var interval = {};
+	var minutely = {};
+	// var storage = {};
+
+	var calculateMinutes = function(startHour, startMinute, endHour, endMinute)
+	{
+		var hour = endHour - startHour;
+		var minute = endMinute - startMinute;
+
+		var minutes = (hour * 60) + minute;
+
+		return minutes < 0 ? 1440 + minutes : minutes;
+	}
+
+	var intervalInstance = function(option, chron)
+	{
+		var chron = chron;
+		var callback = option.callback;
+		var minutes = option.minute;
+		var repeat = option.repeat != null ? option.repeat : true;
+		var origin = option.origin != null ? option.origin : minutes;
+		var key = Math.random()+'';
+		var minute = null;
+		var old;
+
+		this.start = function(minutes)
 		{
-			var hour = endHour - startHour;
-			var minute = endMinute - startMinute;
+			minute = chron.clock.time.minutes() + minutes;
 
-			var minutes = (hour * 60) + minute;
+			var storage = chron.getStorage();
 
-			return minutes < 0 ? 1440 + minutes : minutes;
+			if(!storage[minute])
+				storage[minute] = {};
+
+			storage[minute][key] = this;
+
+			return minute;
 		}
 
-		var intervalInstance = function(option, event)
+		this.begin = function()
 		{
-			var event = event;
-			var callback = option.callback;
-			var minutes = option.minute;
-			var repeat = option.repeat != null ? option.repeat : true;
-			var origin = option.origin != null ? option.origin : minutes;
-			var key = Math.random()+'';
-			var minute = null;
-			var old;
-
-			// not used
-			/*this.flush = function()
-			{
-				if(old)
-					delete event.getStorage()[old][key];
-			}
-
-			// not used
-			this.clear = function()
-			{
-				console.log(event.getStorage()[minute][key]);
-				delete event.getStorage()[minute][key];
-			}*/
-
-			this.start = function(minutes)
-			{
-				minute = event.clock.time().minutes() + minutes;
-
-				var storage = event.getStorage();
-
-				if(!storage[minute])
-					storage[minute] = {};
-
-				storage[minute][key] = this;
-
-				return minute;
-			}
-
-			this.begin = function()
-			{
-				old = minute;
-				return this.start(minutes);
-			}
-
-			this.restart = function()
-			{
-				old = minute;
-				return this.start(origin);
-			}
-
-			this.getKey = function()
-			{
-				return key;
-			}
-
-			this.isRepeatable = function()
-			{
-				return repeat === true;
-			}
-
-			this.execute = function()
-			{
-				return callback();
-			}
-
-			this.update = function()
-			{
-				this.execute();
-
-				if(this.isRepeatable())
-					this.restart();
-				else
-					delete this;
-			}
+			old = minute;
+			return this.start(minutes);
 		}
 
-		this.getStorage = function()
+		this.restart = function()
 		{
-			return storage;
+			old = minute;
+			return this.start(origin);
 		}
 
-		this.setDaily = function(hour, minute, callback, repeat)
+		this.getKey = function()
 		{
-			// var key = key+clock.time().minutes();
-			var repeat = repeat != null ? repeat : true;
-
-			var minutes = calculateMinutes(clock.hour(), clock.minute(), hour, minute);
-
-			var intervalInst = new intervalInstance({
-				minute : minutes, 
-				origin : 1440, 
-				callback : callback, 
-				repeat : repeat
-			}, this);
-
-			intervalInst.begin();
-
-			return intervalInst;
+			return key;
 		}
 
-		this.setTimeout = function(minute, callback)
+		this.isRepeatable = function()
 		{
-			return this.setInterval(minute, callback, false);
+			return repeat === true;
 		}
 
-		this.setInterval = function(minute, callback, repeat)
+		this.execute = function()
 		{
-			var intervalInst = new intervalInstance({
-				callback: callback, 
-				minute: minute, 
-				repeat: repeat
-			}, this);
-
-			intervalInst.begin();
-
-			return intervalInst;
+			return callback();
 		}
 
-		/**
-		* Non saved interval
-		**/
-		this.onEvery = function(minute, callback, save)
-		{
-			if(save)
-				return this.setInterval(minute, callback, true);
-
-			if(minute == 1)
-				return this.setMinutelyInterval(callback);
-
-			interval[Math.random()] = {
-				minute : minute,
-				counter : minute,
-				callback : callback
-			};
-		}
-
-		this.onEveryMinute = function(callback)
-		{
-			return this.setMinutelyInterval(callback);
-		}
-
-		this.setMinutelyInterval = function(callback)
-		{
-			minutely[Math.random()] = callback;
-		}
-
-		/**
-		* Minutely run this update, forever
-		**/
 		this.update = function()
 		{
-			var minutes = clock.time().minutes();
+			this.execute();
 
-			for(var key in minutely)
-			{
-				var result = minutely[key]();
+			if(this.isRepeatable())
+				this.restart();
+			else
+				delete this;
+		}
+	}
 
-				if(minutely[key] === false)
-					delete minutely[key];
-			}
+	this.getStorage = function()
+	{
+		return Exedr.data.cronStorage;
+	}
 
-			for(var key in interval)
-			{
-				if(interval[key].counter > 0)
-				{
-					interval[key].counter--;
-					continue;
-				}
+	/**
+	* Set daily event
+	* @param {int} hour
+	* @param {int} minute
+	* @param {Closure} callback
+	* @param {bool} repeat
+	*/
+	this.setDaily = function(hour, minute, callback, repeat)
+	{
+		// var key = key+clock.time().minutes();
+		var repeat = repeat != null ? repeat : true;
 
-				interval[key].counter = interval[key].minute;
-				interval[key].callback();
-			}
+		var minutes = calculateMinutes(clock.hour(), clock.minute(), hour, minute);
 
-			if(storage[minutes])
-			{
-				for(var key in storage[minutes])
-				{
-					var intervalInst = storage[minutes][key];
-					intervalInst.update();
-				}
-			}
+		var intervalInst = new intervalInstance({
+			minute : minutes, 
+			origin : 1440, 
+			callback : callback, 
+			repeat : repeat
+		}, this);
+
+		intervalInst.begin();
+
+		return intervalInst;
+	}
+
+	/**
+	* Set timeout event
+	* @param {int} minute
+	* @param {closure} callback
+	*/
+	this.setTimeout = function(minute, callback)
+	{
+		return this.setInterval(minute, callback, false);
+	}
+
+	/**
+	* Set a saved interval by minute amount
+	* @param {int} minute
+	* @param {closure} callback
+	* @param {bool} repeat
+	*/
+	this.setInterval = function(minute, callback, repeat)
+	{
+		var intervalInst = new intervalInstance({
+			callback: callback, 
+			minute: minute, 
+			repeat: repeat
+		}, this);
+
+		intervalInst.begin();
+
+		return intervalInst;
+	}
+
+	/**
+	* Set a non saved interval
+	* @param {int} minute
+	* @param {closure} callback
+	* @param {bool} save
+	**/
+	this.onEvery = function(minute, callback, save)
+	{
+		if(save)
+			return this.setInterval(minute, callback, true);
+
+		if(minute == 1)
+			return this.setMinutelyInterval(callback);
+
+		interval[Math.random()] = {
+			minute : minute,
+			counter : minute,
+			callback : callback
+		};
+	}
+
+	/**
+	* Alias to setMinutelyInterval
+	* @param {closure} callback
+	*/
+	this.onEveryMinute = function(callback)
+	{
+		return this.setMinutelyInterval(callback);
+	}
+
+	/**
+	* Run something every minute
+	* @param {closure} callback
+	*/
+	this.setMinutelyInterval = function(callback)
+	{
+		minutely[Math.random()] = callback;
+	}
+
+	/**
+	* Minutely run update
+	* - execute minutely callbacks
+	* - execute interval based callbacks
+	* - execute saved callback
+	**/
+	this.update = function()
+	{
+		var minutes = clock.time.minutes();
+
+		for(var key in minutely)
+		{
+			var result = minutely[key]();
+
+			if(minutely[key] === false)
+				delete minutely[key];
 		}
 
-	}(this.clock);
-}
+		for(var key in interval)
+		{
+			if(interval[key].counter > 0)
+			{
+				interval[key].counter--;
+				continue;
+			}
+
+			interval[key].counter = interval[key].minute;
+			interval[key].callback();
+		}
+
+		var storage = this.getStorage();
+
+		if(storage[minutes])
+		{
+			for(var key in storage[minutes])
+			{
+				var intervalInst = storage[minutes][key];
+				intervalInst.update();
+			}
+		}
+	}
+
+}(Exedr.clock);
+
+//=================================
+// Exedr.daytime
+// - handle daytime information
+//=================================
+/**
+Tone candidates :
+- PRESUNSET
+	0, -100, -150, 75
+
+- Sunset :
+	0, -100, -200, -100
+	-75, -100, 0, 75
+**/
+Exedr.daytime = function(gameScreen, clock)
+{
+	this.data = {
+		DAWN : ['4:00', [-150, -100, 0, 125]],
+		PRESUNRISE : ['6:00', [-75, -75, 25, 125]],
+		SUNRISE : ['7:00', [-20, -20, 0, 50]],
+		MORNING : ['7:00', [10, 10, 0, -20]],
+		NOONSTART : ['11:30', [45, 45, 0, -25]],
+		NOONEND : ['15:00', [0, 0, 0, 0]],
+		PRESUNSET : ['17:00', [0, -50, -100, 0]],
+		SUNSET : ['18:00', [0, -100, -100, 75]],
+		NIGHT : ['20:00', [-150, -100, 0, 125]],
+		MIDNIGHT : ['00:00', [-125, -125, 0, 125]],
+		DEEPMIDNIGHT : ['01:00', [-175, -175, 0, 125]]
+	};
+
+	this.callbacks = {};
+
+	this.temporary = false;
+
+	this.pause = function()
+	{
+		this.paused = true;
+	}
+
+	this.unpause = function()
+	{
+		this.paused = false;
+	}
+
+	this.continue = function()
+	{
+		this.set('CURRENT', 1);
+	}
+
+	this.set = function(preset, instant, temporary)
+	{
+		// if preset is current, unpause anything, and set preset to the last preset.
+		if(preset == 'CURRENT')
+		{
+			this.unpause();
+			preset = this.current;
+		}
+
+		// daytime is currently set to temporary preset
+		if(this.paused)
+		{
+			this.current = preset;
+			return;
+		}
+
+		if(temporary)
+			this.pause();
+
+		if(!temporary && preset != 'CURRENT')
+		{
+			this.temporary = false;
+			this.current = preset;
+		}
+
+		// tint
+		var duration = instant ? 1 : 60;
+		gameScreen.startTint(this.data[preset][1], duration);
+
+		// execute callbacks
+		if(this.callbacks[preset])
+		{
+			for(var key in this.callbacks[preset])
+			{
+				this.callbacks[preset][key]();
+			}
+		}
+	}
+
+	this.isBetween = function(first, second)
+	{
+		var first = this.data[first][0];
+		var second = this.data[second][0];
+
+		return Exedr.util.timeIsBetween(first, second, clock.current());
+	}
+
+	this.is = function(preset)
+	{
+		return this.current == preset;
+	}
+
+	this.initiate = function()
+	{
+		for(var preset in this.data)
+		{
+			var data = Exedr.daytime.data[preset];
+			var time = Exedr.util.parseTime(data[0]);
+
+			// console.log(parseInt(time[0])+':'+parseInt(time[1]));
+			(function(preset)
+			{
+				Exedr.chron.setDaily(time.hour, time.minute, function()
+				{
+					// console.log(preset);
+					Exedr.daytime.set(preset);
+				});
+			})(preset);
+		}
+	}
+
+	/**
+	* Get time for the given preset
+	* @return array [h, m] 
+	**/
+	this.getTime = function(preset)
+	{
+		var data = this.data[preset][0].split(':');
+
+		return [parseInt(data[0]), parseInt(data[1])];
+	}
+
+	/**
+	* Register callback on the given preset
+	* @param {string} preset
+	* @param {closure} callbacks
+	* @return Exedr.storage
+	**/
+	this.on = function(preset, callbacks)
+	{
+		var key = Math.random()+'';
+
+		var context = this;
+
+		if(!this.callbacks[preset])
+			this.callbacks[preset] = {};
+
+		return this.callbacks[preset][key] = Exedr.util.data(callbacks, function()
+		{
+			delete context.callbacks[preset][key];
+		});
+	}
+};
 
 //=================================
 // Exedr.weather
@@ -732,8 +744,28 @@ Exedr.weather = function($gameScreen)
 {
 	this.current = null;
 
-	this.start = function(type, power, duration)
+	this.power = {
+		'storm' : 30,
+		'rain' : 20
+	};
+
+	this.begin = function(type)
 	{
+		this.start(type, 60);
+	}
+
+	/**
+	* @param {string} type
+	* @param {int} duration (default : 1)
+	* @param {float} power (e.g. : 0.9) (default : 1)
+	*/
+	this.start = function(type, duration, power)
+	{
+		this.setBgs(type, power);
+
+		var power = power ? power * this.power[type] : this.power[type];
+		var duration = duration ? duration : 1;
+
 		this.current = [type, power, duration];
 
 		$gameScreen.changeWeather(type, power, duration);
@@ -741,6 +773,11 @@ Exedr.weather = function($gameScreen)
 
 	this.setInside = function()
 	{
+		if(this.current)
+		{
+			this.setBgs(this.current[0], this.current[2] * 0.3);
+		}
+
 		this.stop(true);
 	}
 
@@ -750,7 +787,9 @@ Exedr.weather = function($gameScreen)
 		if(!this.current)
 			return;
 
-		$gameScreen.changeWeather(this.current[0], this.current[1], this.current[2]);
+		this.start(this.current[0], 1, this.current[2]);
+
+		// $gameScreen.changeWeather(this.current[0], this.current[1], this.current[2]);
 	}
 
 	this.stop = function(instant)
@@ -764,6 +803,23 @@ Exedr.weather = function($gameScreen)
 			this.current = null;
 			$gameScreen.changeWeather('none', 0, 60);
 		}
+	}
+
+	/**
+	* @param {string} type
+	* @param {float} power in percentage (e.g. 0.5)
+	*/
+	this.setBgs = function(type, power)
+	{
+		var bgses = {
+			'storm' : {'name' : 'Storm2', pan: 0, pitch: 50, volume: 90},
+			'rain' : {'name' : 'Storm1', pan: 0, pitch: 70, volume: 15}
+		};
+
+		var bgs = bgses[type];
+		bgs.volume = power * bgs.volume;
+
+		return AudioManager.playBgs(bgs);
 	}
 
 	this.isRunning = function()
@@ -789,6 +845,24 @@ Exedr.weather = function($gameScreen)
 		}
 	}
 };
+
+//==================================
+// Exedr.follower 
+// - A simpler interface to get follower instance
+//==================================
+Exedr.follower = function(index)
+{
+	var index = index ? index : 0;
+	return $gamePlayer._followers.follower(index);
+};
+
+Exedr.quantum = new function()
+{
+	this.update = function()
+	{
+
+	}
+}(Exedr.clock);
 
 //=================================
 // Exedr.Util
@@ -943,12 +1017,12 @@ function Window_Time()
 Window_Time.prototype = Object.create(Window_Base.prototype);
 Window_Time.prototype.constructor = Window_Time;
 
-Window_Time.prototype.initialize = function(time)
+Window_Time.prototype.initialize = function(clock)
 {
 	Window_Base.prototype.initialize.call(this, Graphics.boxWidth - 140, 0, 140, this.fittingHeight(1));
 	this.backOpacity = 0;
 	this.windowskin = ImageManager.loadSystem('Windowless');
-	this.time = time;
+	this.clock = clock;
 	this.refresh();
 };
 
@@ -960,7 +1034,7 @@ Window_Time.prototype.open = function() {
 Window_Time.prototype.refreshTime = function()
 {
 	this.contents.clear();
-	var text = this.time.clock.createText();
+	var text = this.clock.createText();
 	this.contents.drawText(text, 0, 10, 100, 10, 'right');
 };
 
@@ -974,7 +1048,7 @@ Window_Time.prototype.update = function()
 	var context = this;
 
 	// refresh content every seconds.
-	this.time.update(function()
+	this.clock.time.update(function()
 	{
 		context.refresh();
 	});
@@ -996,6 +1070,104 @@ Game_Followers.prototype.pos = function(x, y)
 	return bool;
 };
 
+(function(parent)
+{
+	Game_Follower.prototype.chaseCharacter = function(character)
+	{
+		if(this.isMoving())
+			return;
+
+		parent.chaseCharacter.call(this, character);
+	}
+})(Exedr.protoCopy(Game_Follower, ['chaseCharacter']));
+
+//==================================================
+// @Game_Character
+// - moveTo
+// - setRoute
+// - clearDestination
+// - hasDestination
+//==================================================
+Game_Character.prototype.moveTo = function(x, y)
+{
+	this._destinationX = x;
+	this._destinationY = y;
+	this._originalThrough = this._through;
+	this.setThrough(false);
+};
+
+Game_Character.prototype.executeRoute = function(list)
+{
+	var movementMaps = {
+		left : Game_Character.ROUTE_MOVE_LEFT,
+		right : Game_Character.ROUTE_MOVE_RIGHT,
+		up : Game_Character.ROUTE_MOVE_UP,
+		down : Game_Character.ROUTE_MOVE_DOWN,
+		turn_left : Game_Character.ROUTE_TURN_LEFT,
+		turn_right : Game_Character.ROUTE_TURN_RIGHT,
+		turn_up : Game_Character.ROUTE_TURN_UP,
+		turn_down : Game_Character.ROUTE_TURN_DOWN
+	};
+
+	var _list = [];
+
+	for(var key in list)
+	{
+		if(movementMaps[list[key]])
+			_list.push({code: movementMaps[list[key]], indent: null});
+	}
+
+	_list.push({code: 0});
+
+	var moveRoute = {
+		list : _list,
+		repeat : false,
+		skippable : false,
+		wait : true
+	};
+
+	this.forceMoveRoute(moveRoute);
+
+	// $gameMap._interpreter.setWaitMode('route');
+};
+
+Game_Character.prototype.clearDestination = function()
+{
+	this._destinationX = null;
+	this._destinationY = null;
+	this.setThrough(this._originalThrough);
+};
+
+Game_Character.prototype.hasDestination = function()
+{
+	return this._destinationX && this._destinationY;
+};
+
+(function(parent)
+{
+	Game_Character.prototype.update = function()
+	{
+		parent.update.call(this);
+
+		if(this.hasDestination())
+		{
+			var x = this._destinationX;
+			var y = this._destinationY;
+
+			if(x == this._realX && y == this._realY)
+				return this.clearDestination();
+
+			if(!this.isMoving())
+			{
+				var direction = this.findDirectionTo(x, y);
+
+				if(direction > 0)
+					this.moveStraight(direction);
+			}
+		}
+	};
+})(Exedr.protoCopy(Game_Character, ['update']));
+
 //==================================================
 // Game_TroopEvents
 // - Collection of Game_TroopEvent
@@ -1003,19 +1175,19 @@ Game_Followers.prototype.pos = function(x, y)
 function Game_TroopEvents()
 {
 	this.initialize.apply(this, arguments);
-}
+};
 
 Game_TroopEvents.prototype.constructor = Game_TroopEvents;
 
 Game_TroopEvents.prototype.add = function(troopEvent)
 {
 	this.data[troopEvent.troopEventId()] = troopEvent;
-}
+};
 
 Game_TroopEvents.prototype.remove = function(troopEvent)
 {
 
-}
+};
 
 //==================================================
 // Class Game_TroopEvent
@@ -1057,7 +1229,7 @@ Game_TroopEvent.prototype.appearAt = function(x, y)
 	var frame = 0;
 	var context = this;
 	var opacityPerFrame = 255 / 120;
-	$exe.time.onEveryFrame(function()
+	Exedr.time.onEveryFrame(function()
 	{
 		context.setOpacity(opacityPerFrame * frame);
 		
@@ -1081,7 +1253,7 @@ Game_TroopEvent.prototype.checkEventTriggerTouch = function(x, y)
 */
 Game_TroopEvent.prototype.event = function()
 {
-	return $exe.data.troopEvents[this._troopEventId];
+	return Exedr.data.troopEvents[this._troopEventId];
 };
 
 Game_TroopEvent.prototype.start = function()
@@ -1117,7 +1289,7 @@ Game_TroopEvent.prototype.start = function()
 Game_Map.prototype.createTroopEvent = function(troopId, x, y)
 {
 	// base the new id to the length of the current dataMap.events
-	var troopEventId = $exe.data.troopEventMap[troopId];
+	var troopEventId = Exedr.data.troopEventMap[troopId];
 	var eventId = this._events.length;
 	var troopEvent = this._events[eventId] = new Game_TroopEvent(this._mapId, eventId, troopEventId, troopId);
 
@@ -1188,17 +1360,6 @@ Game_Player.prototype.executeEncounter = function()
 
 	return false;
 };
-
-Game_Player.prototype.moveTo = function(x, y)
-{
-	if(this.x != x || this.y != y)
-	{
-		var direction = this.findDirectionTo(x, y);
-		this.executeMove(direction);
-
-		this.moveTo(x, y);
-	}
-}
 
 Game_Player.prototype.beginEncounter = function()
 {
@@ -1304,7 +1465,7 @@ Spriteset_Map.prototype.pushCharacter = function(event)
 //==================================================
 Scene_Map.prototype.createTimeWindow = function()
 {
-	this._windowTime = new Window_Time($exe.time);
+	this._windowTime = new Window_Time(Exedr.clock);
 	this.addWindow(this._windowTime);
 };
 
