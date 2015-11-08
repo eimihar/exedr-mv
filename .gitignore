@@ -1,3 +1,4 @@
 *.js
 !exedr.core.js
+!Exedr_Core.js
 /Exedr

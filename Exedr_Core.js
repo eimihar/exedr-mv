@@ -7,16 +7,6 @@
 //==============================================
 var Exedr = Exedr || {};
 
-var testdata = function()
-{
-	return console.log('testdata');
-};
-
-Exedr.create = function()
-{
-	return {data : {}};
-}
-
 /**
 * Storage instance.
 */
@@ -43,6 +33,40 @@ Exedr.listener = new function()
 	{
 		if(this.data[name])
 			this.data[name](this);
+	}
+};
+
+/**
+* Dependency container
+*/
+Exedr.container = new function()
+{
+	this.data = {};
+
+	this.resolves = {};
+
+	this.register = function(key, callback)
+	{
+		this.data[key] = callback;
+	}
+
+	this.registerMany = function(registry)
+	{
+		for(var key in registry)
+			this.register(key, registry[key]);
+	}
+
+	this.get = function(key)
+	{
+		if(!this.resolves[key])
+		{
+			if(typeof(this.data[key]) == 'function')
+				this.resolves[key] = this.data[key]();
+			else
+				this.resolves[key] = this.data[key];
+		}
+
+		return this.resolves[key];
 	}
 };
 
@@ -154,8 +178,9 @@ Exedr.actorManager = new function()
 		}(key);
 	}
 
-	this.register = function(dataActors)
+	this.register = function()
 	{
+		var dataActors = Exedr.container.get('dataActors');
 		for(var i in dataActors)
 		{
 			var actor = dataActors[i];
@@ -210,6 +235,9 @@ Exedr.actorManager = new function()
 //=============================
 // Exedr.time 
 // - A Time Engine
+// - minutes
+// - hours
+// - days
 //=============================
 Exedr.time = new function()
 {
@@ -219,6 +247,30 @@ Exedr.time = new function()
 	this._frames = 0;
 	this._multiplier = 0;
 	this._increment = 0;
+	this._running = false;
+
+	this.isRunning = function()
+	{
+		return this._running;
+	}
+
+	this.pause = function()
+	{
+		this._running = false;
+	}
+
+	this.begin = function(initial)
+	{
+		if(initial)
+			this._seconds = initial;
+
+		this._running = true;
+	}
+
+	this.continue = function()
+	{
+		this._running = true;
+	}
 
 	this.minutes = function()
 	{
@@ -228,6 +280,11 @@ Exedr.time = new function()
 	this.hours = function()
 	{
 		return Math.floor(this.minutes() / 60);
+	}
+
+	this.days = function()
+	{
+		return Math.floor(this.minutes() / 1440);
 	}
 
 	/**
@@ -242,6 +299,9 @@ Exedr.time = new function()
 
 	this.update = function(callback)
 	{
+		if(!this._running)
+			return;
+
 		for(var key in framely)
 		{
 			var result = framely[key]();
@@ -282,10 +342,18 @@ Exedr.time = new function()
 //=======================
 // Exedr.time.clock
 // - The game clock
+// - minute (current minute of an hour)
+// - hour (hour of the day)
+// - isDay(day)
+// - current (string of stringified time) [24 hour]
+// - isBetweenHour
+// - isBetween
+// - createText
 //=======================
 Exedr.clock = new function(time)
 {
 	this.time = time;
+	this.visible = false;
 
 	this.minute = function()
 	{
@@ -300,6 +368,41 @@ Exedr.clock = new function(time)
 	this.day = function()
 	{
 		return Math.floor(this.time.minutes() / 60 / 24) % 7;
+	}
+
+	this.begin = function(initial)
+	{
+		this.showClock();
+		this.time.begin(initial);
+	}
+
+	this.continue = function()
+	{
+		this.showClock();
+		this.time.continue();
+	}
+
+	this.hideClock = function()
+	{
+		this.visible = false;
+	}
+
+	this.showClock = function()
+	{
+		this.visible = true;
+	}
+
+	this.isRunning = function()
+	{
+		return this.time.isRunning();
+	}
+
+	this.pause = function(hideClock)
+	{
+		if(hideClock)
+			this.hideClock();
+
+		this.time.pause();
 	}
 
 	this.isDay = function(day)
@@ -349,7 +452,7 @@ Exedr.clock = new function(time)
 			hour = hour === 0 ? 12 : (hour > 12 ? hour - 12 : hour);
 		var minute = this.minute();
 		// var text = Exedr.util.repeatFills(hour, 2)+':'+Exedr.util.repeatFills(minute, 2)+' '+amPm;
-		var text = Exedr.util.stringifyTime(hour, minute)+' '+amPm
+		var text = Exedr.util.stringifyTime(hour, minute)+' '+amPm;
 
 		return text;
 	}
@@ -358,6 +461,12 @@ Exedr.clock = new function(time)
 //===================
 // Exedr.chron
 // - The game time-based eventing engine
+// - setDaily
+// - setTimeout
+// - setInterval
+// - onEvery
+// - onEveryMinute
+// - setMinutelyInterval
 //===================
 Exedr.chron = new function(clock)
 {
@@ -545,10 +654,13 @@ Exedr.chron = new function(clock)
 	* - execute minutely callbacks
 	* - execute interval based callbacks
 	* - execute saved callback
+	* - execute Exedr.game.update
 	**/
 	this.update = function()
 	{
 		var minutes = clock.time.minutes();
+
+		Exedr.game.update();
 
 		for(var key in minutely)
 		{
@@ -597,25 +709,30 @@ Tone candidates :
 	0, -100, -200, -100
 	-75, -100, 0, 75
 **/
-Exedr.daytime = function(gameScreen, clock)
+Exedr.daytime = new function(clock)
 {
 	this.data = {
+		MIDNIGHT : ['00:00', [-125, -125, 0, 125]],
+		DEEPMIDNIGHT : ['01:00', [-175, -175, 0, 125]],
 		DAWN : ['4:00', [-150, -100, 0, 125]],
 		PRESUNRISE : ['6:00', [-75, -75, 25, 125]],
-		SUNRISE : ['7:00', [-20, -20, 0, 50]],
+		// SUNRISE : ['7:00', [-20, -20, 0, 50]],
 		MORNING : ['7:00', [10, 10, 0, -20]],
 		NOONSTART : ['11:30', [45, 45, 0, -25]],
 		NOONEND : ['15:00', [0, 0, 0, 0]],
 		PRESUNSET : ['17:00', [0, -50, -100, 0]],
 		SUNSET : ['18:00', [0, -100, -100, 75]],
-		NIGHT : ['20:00', [-150, -100, 0, 125]],
-		MIDNIGHT : ['00:00', [-125, -125, 0, 125]],
-		DEEPMIDNIGHT : ['01:00', [-175, -175, 0, 125]]
+		NIGHT : ['20:00', [-150, -100, 0, 125]]
 	};
 
 	this.callbacks = {};
 
 	this.temporary = false;
+
+	var gameScreen = function()
+	{
+		return Exedr.container.get('gameScreen');
+	}
 
 	this.pause = function()
 	{
@@ -629,11 +746,15 @@ Exedr.daytime = function(gameScreen, clock)
 
 	this.continue = function()
 	{
-		this.set('CURRENT', 1);
+		if(this.current)
+			this.set('CURRENT', true);
 	}
 
 	this.set = function(preset, instant, temporary)
 	{
+		if(instant && preset != 'CURRENT' && !this.current)
+			this.current = preset;
+
 		// if preset is current, unpause anything, and set preset to the last preset.
 		if(preset == 'CURRENT')
 		{
@@ -659,7 +780,7 @@ Exedr.daytime = function(gameScreen, clock)
 
 		// tint
 		var duration = instant ? 1 : 60;
-		gameScreen.startTint(this.data[preset][1], duration);
+		gameScreen().startTint(this.data[preset][1], duration);
 
 		// execute callbacks
 		if(this.callbacks[preset])
@@ -669,6 +790,11 @@ Exedr.daytime = function(gameScreen, clock)
 				this.callbacks[preset][key]();
 			}
 		}
+	}
+
+	this.isDay = function()
+	{
+		return isBetween('PRESUNRISE', 'NIGHT');
 	}
 
 	this.isBetween = function(first, second)
@@ -734,13 +860,13 @@ Exedr.daytime = function(gameScreen, clock)
 			delete context.callbacks[preset][key];
 		});
 	}
-};
+}(Exedr.clock);
 
 //=================================
 // Exedr.weather
 // - A weather management engine
 //=================================
-Exedr.weather = function($gameScreen)
+Exedr.weather = new function()
 {
 	this.current = null;
 
@@ -754,31 +880,36 @@ Exedr.weather = function($gameScreen)
 		this.start(type, 60);
 	}
 
+	this.gameScreen = function()
+	{
+		return Exedr.container.get('gameScreen');
+	}
+
 	/**
 	* @param {string} type
 	* @param {int} duration (default : 1)
 	* @param {float} power (e.g. : 0.9) (default : 1)
 	*/
-	this.start = function(type, duration, power)
+	this.start = function(type, multiplier, instant)
 	{
-		this.setBgs(type, power);
+		var multiplier = multiplier ? multiplier : 1;
+		this.setBgs(type, multiplier, instant);
 
-		var power = power ? power * this.power[type] : this.power[type];
-		var duration = duration ? duration : 1;
+		var power = multiplier * this.power[type];
 
-		this.current = [type, power, duration];
+		var duration = instant ? 1 : 60;
 
-		$gameScreen.changeWeather(type, power, duration);
+		this.current = [type, power, duration, multiplier];
+
+		this.gameScreen().changeWeather(type, power, duration);
 	}
 
 	this.setInside = function()
 	{
-		if(this.current)
-		{
-			this.setBgs(this.current[0], this.current[2] * 0.3);
-		}
+		this.gameScreen().clearWeather();
 
-		this.stop(true);
+		if(this.current)
+			this.setBgs(this.current[0], this.current[3] * 0.3, true);
 	}
 
 	// instantly continue weather.
@@ -787,7 +918,7 @@ Exedr.weather = function($gameScreen)
 		if(!this.current)
 			return;
 
-		this.start(this.current[0], 1, this.current[2]);
+		this.start(this.current[0], this.current[3], true);
 
 		// $gameScreen.changeWeather(this.current[0], this.current[1], this.current[2]);
 	}
@@ -796,12 +927,15 @@ Exedr.weather = function($gameScreen)
 	{
 		if(instant)
 		{
-			$gameScreen.clearWeather();
+			this.gameScreen().clearWeather();
+			AudioManager.stopBgs();
 		}
 		else
 		{
 			this.current = null;
-			$gameScreen.changeWeather('none', 0, 60);
+			this.gameScreen().changeWeather('none', 0, 60);
+			// AudioManager.stopBgs();
+			AudioManager.fadeOutBgs(3);
 		}
 	}
 
@@ -809,7 +943,7 @@ Exedr.weather = function($gameScreen)
 	* @param {string} type
 	* @param {float} power in percentage (e.g. 0.5)
 	*/
-	this.setBgs = function(type, power)
+	this.setBgs = function(type, power, instant)
 	{
 		var bgses = {
 			'storm' : {'name' : 'Storm2', pan: 0, pitch: 50, volume: 90},
@@ -817,9 +951,16 @@ Exedr.weather = function($gameScreen)
 		};
 
 		var bgs = bgses[type];
-		bgs.volume = power * bgs.volume;
 
-		return AudioManager.playBgs(bgs);
+		if(instant)
+			bgs.pitch--;
+
+		bgs.volume = (power ? power : 1) * bgs.volume;
+
+		AudioManager.playBgs(bgs);
+
+		if(!instant)
+			return AudioManager.fadeInBgs(3);
 	}
 
 	this.isRunning = function()
@@ -832,16 +973,16 @@ Exedr.weather = function($gameScreen)
 	**/
 	this.update = function()
 	{
-		if($gameScreen._weatherDuration > 0)
+		if(this.gameScreen()._weatherDuration > 0)
 		{
-			var d = $gameScreen._weatherDuration;
-			var t = $gameScreen._weatherPowerTarget;
+			var d = this.gameScreen()._weatherDuration;
+			var t = this.gameScreen()._weatherPowerTarget;
 
-			$gameScreen._weatherPower = ($gameScreen._weatherPower * (d - 1) + t) / d;
-			$gameScreen._weatherDuration--;
+			this.gameScreen()._weatherPower = (this.gameScreen()._weatherPower * (d - 1) + t) / d;
+			this.gameScreen()._weatherDuration--;
 
-			if($gameScreen._weatherPower == 0 && $gameScreen._weatherDuration == 0)
-				$gameScreen._weatherType = 9;
+			if(this.gameScreen()._weatherPower == 0 && this.gameScreen()._weatherDuration == 0)
+				this.gameScreen()._weatherType = 9;
 		}
 	}
 };
@@ -1040,7 +1181,10 @@ Window_Time.prototype.refreshTime = function()
 
 Window_Time.prototype.refresh = function()
 {
-	this.refreshTime();
+	if(this.clock.visible)
+		this.refreshTime();
+	else
+		this.contents.clear();
 };
 
 Window_Time.prototype.update = function()
@@ -1056,6 +1200,7 @@ Window_Time.prototype.update = function()
 
 //==================================================
 // @Game_Followers
+// - pos (check if there's any follower in the given position)
 //==================================================
 Game_Followers.prototype.pos = function(x, y)
 {
@@ -1070,10 +1215,42 @@ Game_Followers.prototype.pos = function(x, y)
 	return bool;
 };
 
+//==================================================
+// @Game_Follower
+// - stopFollowing (will stop following character)
+// - follow
+// isFollowing
+// &chaseCharacter
+// * Related feature
+//  - Game_Character.moveTo
+//==================================================
+
+Game_Follower.prototype.stopFollowing = function()
+{
+	this._stopFollowing = true;
+
+	return this;
+}
+
+Game_Follower.prototype.follow = function()
+{
+	this._stopFollowing = false;
+
+	return this;
+}
+
+Game_Follower.prototype.isFollowing = function()
+{
+	return this._stopFollowing == true ? false : true;
+};
+
 (function(parent)
 {
 	Game_Follower.prototype.chaseCharacter = function(character)
 	{
+		if(!this.isFollowing())
+			return;
+
 		if(this.isMoving())
 			return;
 
@@ -1084,20 +1261,31 @@ Game_Followers.prototype.pos = function(x, y)
 //==================================================
 // @Game_Character
 // - moveTo
-// - setRoute
+// - executeRoute
 // - clearDestination
 // - hasDestination
+// - &update
 //==================================================
-Game_Character.prototype.moveTo = function(x, y)
+Game_Character.prototype.moveTo = function(x, y, wait)
 {
+	var wait = wait || wait === false ? wait : true;
 	this._destinationX = x;
 	this._destinationY = y;
 	this._originalThrough = this._through;
 	this.setThrough(false);
+
+	if(wait)
+	{
+		$gameMap._interpreter.wait(1);
+		$gameMap._interpreter._character = this;
+	    $gameMap._interpreter.setWaitMode('moving');
+	}
 };
 
-Game_Character.prototype.executeRoute = function(list)
+Game_Character.prototype.executeRoute = function(list, wait)
 {
+	var wait = wait || wait === false ? wait : true;
+
 	var movementMaps = {
 		left : Game_Character.ROUTE_MOVE_LEFT,
 		right : Game_Character.ROUTE_MOVE_RIGHT,
@@ -1128,7 +1316,11 @@ Game_Character.prototype.executeRoute = function(list)
 
 	this.forceMoveRoute(moveRoute);
 
-	// $gameMap._interpreter.setWaitMode('route');
+	if(wait)
+	{
+	 	$gameMap._interpreter._character = this;
+	    $gameMap._interpreter.setWaitMode('route');
+	}
 };
 
 Game_Character.prototype.clearDestination = function()
@@ -1136,6 +1328,7 @@ Game_Character.prototype.clearDestination = function()
 	this._destinationX = null;
 	this._destinationY = null;
 	this.setThrough(this._originalThrough);
+	this._isMoveRouteForcing = false;
 };
 
 Game_Character.prototype.hasDestination = function()
@@ -1347,6 +1540,7 @@ Game_Map.prototype.getRandomEncounter = function()
 // @Game_Player
 // - &executeEncounter
 // - getRandomLocation
+// - follower
 //==================================================
 Game_Player.prototype.executeEncounter = function()
 {
@@ -1377,6 +1571,13 @@ Game_Player.prototype.isEncountering = function()
 	}
 
 	return false;
+}
+
+Game_Player.prototype.follower = function(index)
+{
+	var index = index ? index : 0;
+
+	return this._followers.follower(index);
 }
 
 /**
@@ -1496,12 +1697,13 @@ Scene_Map.prototype.pushCharacterSprite = function(event)
 
 (function(parent)
 {
-	Game_Message.prototype.add = function(text)
+	Game_Message.prototype.addText = function(text)
 	{
 		var actorTags = text.match(/<(.*?)>/);
 
-		if(actorTags)
+		if(actorTags && text.indexOf(actorTags[0]) === 0)
 		{
+			console.log(actorTags);
 			var actorTag = actorTags[1].split(':');
 			text = text.replace(actorTags[0], '');
 
@@ -1518,9 +1720,27 @@ Scene_Map.prototype.pushCharacterSprite = function(event)
 			}
 		}
 
-		parent.add.call(this, text);
+		parent.addText.call(this, text);
 	}
-})(Exedr.protoCopy(Game_Message, ['add']));
+})(Exedr.protoCopy(Game_Message, ['addText']));
+
+//=======================================
+// @Game_Interpreter
+// * Related methods
+//  - Game_Character.moveTo
+//=======================================
+(function(parent)
+{
+	Game_Interpreter.prototype.updateWaitMode = function()
+	{
+		if(this._waitMode == 'moving')
+			if(this._character.isMoving())
+				return true;
+
+		return parent.updateWaitMode.call(this);
+	}
+})(Exedr.protoCopy(Game_Interpreter, ['updateWaitMode']));
+
 
 //============================
 // @DataManager
@@ -1591,7 +1811,7 @@ Scene_Map.prototype.pushCharacterSprite = function(event)
 //==============================
 // Initiate $exe global variable, a facade.
 //==============================
-var $exe = Exedr.create();
+// var $exe = Exedr.create();
 
 // Exedr.listener = new Exedr.listener($exe);
 
