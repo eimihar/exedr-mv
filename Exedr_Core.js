@@ -299,9 +299,6 @@ Exedr.time = new function()
 
 	this.update = function(callback)
 	{
-		if(!this._running)
-			return;
-
 		for(var key in framely)
 		{
 			var result = framely[key]();
@@ -309,6 +306,9 @@ Exedr.time = new function()
 			if(result === false)
 				delete framely[key];
 		}
+		
+		if(!this._running)
+			return;
 
 		this._frames += 1 * this._multiplier;
 		
@@ -1336,6 +1336,34 @@ Game_Character.prototype.hasDestination = function()
 	return this._destinationX && this._destinationY;
 };
 
+Game_Character.prototype.findDirectionToPlayer = function()
+{
+	var d = this.findDirectionTo($gamePlayer.x, $gamePlayer.y);
+
+	console.log($gamePlayer.x+' '+$gamePlayer.y);
+
+	return d;
+};
+
+Game_Character.prototype.jumpTowardPlayer = function(distance)
+{
+	var distance = distance ? distance : 1;
+	var d = this.findDirectionToPlayer();
+
+	var ds = {2: 1, 8: -1, 4: -1, 6: 1};
+
+	var x = d == 4 || d == 6 ? 0 + (ds[d] * distance) : 0;
+	var y = d == 2 || d == 8 ? 0 + (ds[d] * distance) : 0;
+
+	this.jump(x, y);
+};
+
+Game_Character.prototype.turnTowardEachOther = function(character)
+{
+	character.turnTowardCharacter(this);
+	this.turnTowardCharacter(character);
+};
+
 (function(parent)
 {
 	Game_Character.prototype.update = function()
@@ -1421,7 +1449,7 @@ Game_TroopEvent.prototype.appearAt = function(x, y)
 
 	var frame = 0;
 	var context = this;
-	var opacityPerFrame = 255 / 120;
+	var opacityPerFrame = 255 / 60;
 	Exedr.time.onEveryFrame(function()
 	{
 		context.setOpacity(opacityPerFrame * frame);
